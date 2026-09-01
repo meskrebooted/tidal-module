@@ -2,14 +2,14 @@
   "category:module": [
     {
       "id": "com.8spine.module.tidal",
-      "name": "TIDAL",
+      "name": "TIDALbroken",
       "pkg": "com.8spine.module.tidal",
       "file": "8spine-tidal-module.8spine",
       "download": "https://raw.githubusercontent.com/meskrebooted/tidal-module/main/8spine-tidal-module.8spine",
       "version": "1.0.1",
       "code": 200,
       "type": "PLAYER",
-      "author": "MESK",
+      "author": "mesk",
       "description": "Tidal integration for 8spine: search, stream Dolby Atmos/Hi-Res/Lossless with fallback qualities. Uses public token + standard fetch API.",
       "tags": [
         "tidal",
