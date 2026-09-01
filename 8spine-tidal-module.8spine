@@ -1,7 +1,7 @@
 const MY_MODULE = {
   id: "com.8spine.module.tidal",
   name: "TIDAL",
-  version: "1.0.0",
+  version: "1.0.1",
   labels: ["TIDAL", "LOSSLESS", "DOLBY_ATMOS", "STREAMING"],
 
   searchTracks: (query, limit) => {
