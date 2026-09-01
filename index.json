@@ -1,0 +1,27 @@
+{
+  "category:music": [
+    {
+      "id": "8spine-tidal-module",
+      "name": "TIDAL Module",
+      "pkg": "com.8spine.module.tidal",
+      "file": "8spine-tidal-module.8spine",
+      "download": "https://raw.githubusercontent.com/yourname/8spine-tidal-module/main/8spine-tidal-module.js",
+      "version": "1.0.0",
+      "code": 200,
+      "type": "PLAYER",
+      "author": "ContextSwitchAI",
+      "description": "Tidal integration for 8spine: search, stream Dolby Atmos/Hi-Res/Lossless with fallback qualities. Uses public token + standard fetch API.",
+      "tags": [
+        "tidal",
+        "music",
+        "streaming",
+        "lossless",
+        "dolby-atmos"
+      ],
+      "featured": false,
+      "trusted": false,
+      "nsfw": false,
+      "lang": "all"
+    }
+  ]
+}

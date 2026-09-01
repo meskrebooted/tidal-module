@@ -1,0 +1,238 @@
+import { AsyncStorage } from "react-native";
+
+const PUBLIC_TOKEN = "49YxDN9a2aFV6RTG";
+
+const BASE_URL = "https://api.tidal.com";
+
+export async function searchTracks(query, limit = 20) {
+  const response = await fetch(`${BASE_URL}/v1/search`, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json",
+      "Authorization": `Bearer ${PUBLIC_TOKEN}`
+    },
+    params: {
+      query,
+      limit,
+      "tidal:mediaArtist": "",
+      "tidal:mediaTrack": "",
+      "tidal:mediaAlbum": "",
+      "tidal:music": "Track"
+    }
+  });
+
+  const data = await response.json();
+  return data.tracks || [];
+}
+
+export async function getTrackStreamUrl(trackId, quality = "LOSSLESS") {
+  let endpoint;
+  
+  const qualityMap = {
+    DOLBY_ATMOS: "DOLBY_ATMOS",
+    HI_RES_LOSSLESS: "HI_RES_LOSSLESS",
+    LOSSLESS: "LOSSLESS",
+    HIGH: "HIGH",
+    LOW: "LOW"
+  };
+
+  const targetQuality = qualityMap[quality] || "LOSSLESS";
+
+  try {
+    const infoResponse = await fetch(`${BASE_URL}/v1/tracks/${trackId}/playbackInfo`, {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${PUBLIC_TOKEN}`
+      }
+    });
+
+    const infoData = await infoResponse.json();
+
+    if (infoData.tracks && infoData.tracks[0]) {
+      const track = infoData.tracks[0];
+      
+      let streamUrl;
+      
+      if (targetQuality === "DOLBY_ATMOS") {
+        streamUrl = track.audio?. DolbyAtmos?.url || track.audio?. hifi?.url;
+        if (!streamUrl && track.audio?. lossless?.url) {
+          streamUrl = track.audio.lossless.url;
+        }
+      } else if (targetQuality === "HI_RES_LOSSLESS") {
+        streamUrl = track.audio?. hifi?.url;
+        if (!streamUrl) streamUrl = track.audio?. lossless?.url;
+      } else if (targetQuality === "LOSSLESS") {
+        streamUrl = track.audio?. lossless?.url;
+      } else if (targetQuality === "HIGH") {
+        streamUrl = track.audio?. high?.url;
+      } else if (targetQuality === "LOW") {
+        streamUrl = track.audio?. standard?.url;
+      }
+
+      if (streamUrl) {
+        return {
+          url: streamUrl,
+          quality: targetQuality,
+          trackId
+        };
+      }
+    }
+
+    // Fallback: try next quality level
+    const fallbacks = {
+      DOLBY_ATMOS: "HI_RES_LOSSLESS",
+      HI_RES_LOSSLESS: "LOSSLESS",
+      LOSSLESS: "HIGH",
+      HIGH: "LOW"
+    };
+
+    const fallbackQuality = fallbacks[targetQuality];
+    if (fallbackQuality) {
+      return getTrackStreamUrl(trackId, fallbackQuality);
+    }
+  } catch (error) {
+    console.error("Error getting track stream URL:", error);
+  }
+
+  return null;
+}
+
+export async function getAlbumStreamUrl(albumId, quality = "LOSSLESS") {
+  try {
+    const response = await fetch(`${BASE_URL}/v1/albums/${albumId}`, {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${PUBLIC_TOKEN}`
+      }
+    });
+
+    const data = await response.json();
+
+    if (data.albums && data.albums[0]) {
+      const album = data.albums[0];
+      let streamUrl;
+
+      const qualityMap = {
+        DOLBY_ATMOS: "DOLBY_ATMOS",
+        HI_RES_LOSSLESS: "HI_RES_LOSSLESS",
+        LOSSLESS: "LOSSLESS",
+        HIGH: "HIGH",
+        LOW: "LOW"
+      };
+
+      const targetQuality = qualityMap[quality] || "LOSSLESS";
+
+      if (targetQuality === "DOLBY_ATMOS") {
+        streamUrl = album?. audio?. DolbyAtmos?.url;
+        if (!streamUrl) streamUrl = album?. audio?. hifi?.url;
+      } else if (targetQuality === "HI_RES_LOSSLESS") {
+        streamUrl = album?. audio?. hifi?.url;
+        if (!streamUrl) streamUrl = album?. audio?. lossless?.url;
+      } else if (targetQuality === "LOSSLESS") {
+        streamUrl = album?. audio?. lossless?.url;
+      } else if (targetQuality === "HIGH") {
+        streamUrl = album?. audio?. high?.url;
+      } else if (targetQuality === "LOW") {
+        streamUrl = album?. audio?. standard?.url;
+      }
+
+      if (streamUrl) {
+        return {
+          url: streamUrl,
+          quality: targetQuality,
+          albumId
+        };
+      }
+    }
+
+    const fallbacks = {
+      DOLBY_ATMOS: "HI_RES_LOSSLESS",
+      HI_RES_LOSSLESS: "LOSSLESS",
+      LOSSLESS: "HIGH",
+      HIGH: "LOW"
+    };
+
+    const fallbackQuality = fallbacks[targetQuality];
+    if (fallbackQuality) {
+      return getAlbumStreamUrl(albumId, fallbackQuality);
+    }
+  } catch (error) {
+    console.error("Error getting album stream URL:", error);
+  }
+
+  return null;
+}
+
+export async function getPlaylists(limit = 50) {
+  const response = await fetch(`${BASE_URL}/v1/me/playlists`, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json",
+      "Authorization": `Bearer ${PUBLIC_TOKEN}`
+    },
+    params: {
+      limit,
+      "fields": "id,name,tracks"
+    }
+  });
+
+  const data = await response.json();
+  return data.items || [];
+}
+
+export async function getPlaylistTracks playlistId, limit = 100) {
+  const response = await fetch(`${BASE_URL}/v1/playlists/${playlistId}/tracks`, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json",
+      "Authorization": `Bearer ${PUBLIC_TOKEN}`
+    },
+    params: {
+      limit,
+      "fields": "track.id,track.name,track.artists,track.album"
+    }
+  });
+
+  const data = await response.json();
+  return data.items || [];
+}
+
+export async function getUserProfile() {
+  try {
+    const response = await fetch(`${BASE_URL}/v1/me`, {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${PUBLIC_TOKEN}`
+      }
+    });
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error("Error getting user profile:", error);
+    return null;
+  }
+}
+
+export async function loginWithToken(token) {
+  // Store token for subsequent requests
+  await AsyncStorage.setItem("tidal_access_token", token);
+  PUBLIC_TOKEN = token;
+  
+  return true;
+}
+
+export async function logout() {
+  await AsyncStorage.removeItem("tidal_access_token");
+  PUBLIC_TOKEN = "49YxDN9a2aFV6RTG";
+  
+  return true;
+}
+
+export async function isLoggedIn() {
+  const token = await AsyncStorage.getItem("tidal_access_token");
+  return token !== null;
+}
