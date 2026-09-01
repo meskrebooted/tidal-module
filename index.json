@@ -9,7 +9,7 @@
       "version": "1.0.0",
       "code": 200,
       "type": "PLAYER",
-      "author": "ContextSwitchAI",
+      "author": "Mesk",
       "description": "Tidal integration for 8spine: search, stream Dolby Atmos/Hi-Res/Lossless with fallback qualities. Uses public token + standard fetch API.",
       "tags": [
         "tidal",
