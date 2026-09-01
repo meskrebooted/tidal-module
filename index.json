@@ -6,7 +6,7 @@
       "pkg": "com.8spine.module.tidal",
       "file": "8spine-tidal-module.8spine",
       "download": "https://raw.githubusercontent.com/meskrebooted/tidal-module/main/8spine-tidal-module.8spine",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "code": 200,
       "type": "PLAYER",
       "author": "MESK",
