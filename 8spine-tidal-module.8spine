@@ -1,238 +1,363 @@
-import { AsyncStorage } from "react-native";
+// ─────────────────────────────────────────────────────────────────────────────
+//  Tidal — 8SPINE Module
+//  Qualità: Dolby Atmos, Hi-Res FLAC, Lossless FLAC, High (AAC 320), Low
+//  Fallback automatico: Atmos → Hi-Res → Lossless → High
+// ─────────────────────────────────────────────────────────────────────────────
 
-const PUBLIC_TOKEN = "49YxDN9a2aFV6RTG";
+var TIDAL_API    = 'https://tidal.com/v1';
+var TIDAL_RES    = 'https://resources.tidal.com';
+var PUBLIC_TOKEN = '49YxDN9a2aFV6RTG';
+var COUNTRY      = 'US';
+var LOCALE       = 'en_US';
+var DEVICE_TYPE  = 'BROWSER';
 
-const BASE_URL = "https://api.tidal.com";
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-export async function searchTracks(query, limit = 20) {
-  const response = await fetch(`${BASE_URL}/v1/search`, {
-    method: "GET",
-    headers: {
-      "Accept": "application/json",
-      "Authorization": `Bearer ${PUBLIC_TOKEN}`
-    },
-    params: {
-      query,
-      limit,
-      "tidal:mediaArtist": "",
-      "tidal:mediaTrack": "",
-      "tidal:mediaAlbum": "",
-      "tidal:music": "Track"
-    }
-  });
-
-  const data = await response.json();
-  return data.tracks || [];
+function tidalHeaders() {
+    return {
+        'Accept': 'application/json',
+        'x-tidal-token': PUBLIC_TOKEN
+    };
 }
 
-export async function getTrackStreamUrl(trackId, quality = "LOSSLESS") {
-  let endpoint;
-  
-  const qualityMap = {
-    DOLBY_ATMOS: "DOLBY_ATMOS",
-    HI_RES_LOSSLESS: "HI_RES_LOSSLESS",
-    LOSSLESS: "LOSSLESS",
-    HIGH: "HIGH",
-    LOW: "LOW"
-  };
+function tidalGet(path, params) {
+    params = params || {};
+    params.countryCode = COUNTRY;
+    params.locale      = LOCALE;
+    params.deviceType  = DEVICE_TYPE;
 
-  const targetQuality = qualityMap[quality] || "LOSSLESS";
+    var keys = Object.keys(params);
+    var qs = keys.map(function(k) {
+        return encodeURIComponent(k) + '=' + encodeURIComponent(String(params[k]));
+    }).join('&');
 
-  try {
-    const infoResponse = await fetch(`${BASE_URL}/v1/tracks/${trackId}/playbackInfo`, {
-      method: "GET",
-      headers: {
-        "Accept": "application/json",
-        "Authorization": `Bearer ${PUBLIC_TOKEN}`
-      }
+    var url = TIDAL_API + '/' + path.replace(/^\//, '') + '?' + qs;
+
+    return fetch(url, { headers: tidalHeaders() }).then(function(r) {
+        if (!r.ok) throw new Error('Tidal HTTP ' + r.status + ' — ' + path);
+        return r.json();
     });
+}
 
-    const infoData = await infoResponse.json();
+function imageURL(id, size) {
+    if (!id) return '';
+    return TIDAL_RES + '/images/' + String(id).replace(/-/g, '/') + '/' + (size || '1280x1280') + '.jpg';
+}
 
-    if (infoData.tracks && infoData.tracks[0]) {
-      const track = infoData.tracks[0];
-      
-      let streamUrl;
-      
-      if (targetQuality === "DOLBY_ATMOS") {
-        streamUrl = track.audio?. DolbyAtmos?.url || track.audio?. hifi?.url;
-        if (!streamUrl && track.audio?. lossless?.url) {
-          streamUrl = track.audio.lossless.url;
+function joinNames(artists) {
+    if (!artists || !artists.length) return '';
+    return artists.map(function(a) { return String(a.name || ''); }).filter(Boolean).join(', ');
+}
+
+function trackTitle(t) {
+    var title   = String(t.title   || '').trim();
+    var version = String(t.version || '').trim();
+    if (!version) return title;
+    if (title.toLowerCase().indexOf('(' + version.toLowerCase() + ')') >= 0) return title;
+    return title + ' (' + version + ')';
+}
+
+function albumCover(t) {
+    var cover = (t.album && t.album.cover) || '';
+    return imageURL(cover, '1280x1280');
+}
+
+// Normalise a raw Tidal track object → 8SPINE track format
+function formatTrack(t) {
+    if (!t || !t.id) return null;
+    var tags = (t.mediaMetadata && Array.isArray(t.mediaMetadata.tags))
+        ? t.mediaMetadata.tags.map(function(x) { return String(x).toUpperCase(); })
+        : [];
+    var modes = Array.isArray(t.audioModes)
+        ? t.audioModes.map(function(x) { return String(x).toUpperCase(); })
+        : [];
+
+    var hasAtmos   = tags.indexOf('DOLBY_ATMOS') >= 0 || modes.indexOf('DOLBY_ATMOS') >= 0;
+    var hasHiRes   = tags.indexOf('HIRES_LOSSLESS') >= 0 || tags.indexOf('HI_RES_LOSSLESS') >= 0 ||
+                     String(t.audioQuality || '').toUpperCase() === 'HI_RES_LOSSLESS';
+    var hasLossless= tags.indexOf('LOSSLESS') >= 0 || String(t.audioQuality || '').toUpperCase() === 'LOSSLESS';
+
+    var qualities = ['HIGH', 'LOW'];
+    if (hasLossless || hasHiRes || hasAtmos) qualities.unshift('LOSSLESS');
+    if (hasHiRes   || hasAtmos) qualities.unshift('HIRES');
+    if (hasAtmos)               qualities.unshift('DOLBY_ATMOS');
+
+    return {
+        id:         'tidal_' + String(t.id),
+        title:      trackTitle(t),
+        artist:     joinNames(t.artists) || String((t.artist && t.artist.name) || ''),
+        album:      String((t.album && t.album.title) || ''),
+        albumCover: albumCover(t),
+        duration:   Number(t.duration || 0),
+        audioQuality: hasAtmos ? 'DOLBY_ATMOS' : hasHiRes ? 'HIRES' : hasLossless ? 'LOSSLESS' : 'HIGH',
+        availableQualities: qualities,
+        // carry raw data for stream resolution
+        _tidalId:   String(t.id),
+        _hasAtmos:  hasAtmos,
+        _hasHiRes:  hasHiRes,
+        _isrc:      String(t.isrc || '')
+    };
+}
+
+// ─── Quality resolution ───────────────────────────────────────────────────────
+
+// Map 8SPINE quality value → Tidal API quality string
+function tidalQuality(q) {
+    if (q === 'DOLBY_ATMOS') return 'DOLBY_ATMOS';
+    if (q === 'HIRES')       return 'HI_RES_LOSSLESS';
+    if (q === 'LOSSLESS')    return 'LOSSLESS';
+    if (q === 'HIGH')        return 'HIGH';
+    return 'LOW';
+}
+
+// Fallback chain: if requested tier unavailable, try the next
+function fallbackChain(q) {
+    if (q === 'DOLBY_ATMOS') return ['DOLBY_ATMOS', 'HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH'];
+    if (q === 'HIRES')       return ['HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH'];
+    if (q === 'LOSSLESS')    return ['LOSSLESS', 'HIGH'];
+    if (q === 'HIGH')        return ['HIGH', 'LOW'];
+    return ['LOW'];
+}
+
+// ─── Stream resolution ────────────────────────────────────────────────────────
+
+// Tidal's public /tracks/{id}/playbackinfopostpaywall is behind auth.
+// The public token gives access to /tracks/{id}/streamUrl (legacy, HIGH/LOW only)
+// and to the stream via the BTS manifest approach for LOSSLESS/HIRES.
+//
+// Strategy:
+//   1. Try GET /tracks/{id}/streamUrl?soundQuality={q} — works for HIGH/LOW, sometimes LOSSLESS
+//   2. For LOSSLESS/HIRES/ATMOS: GET /tracks/{id}/playbackinfo?audioquality={q}
+//      → returns a manifest (BTS JSON or DASH MPD) with direct URL(s)
+//   3. Fallback through chain until we get a playable URL
+
+function fetchStreamLegacy(tidalId, soundQuality) {
+    return tidalGet('tracks/' + tidalId + '/streamUrl', { soundQuality: soundQuality })
+        .then(function(data) {
+            var url = String(data.url || '');
+            if (!url) throw new Error('No url in streamUrl response');
+            return url;
+        });
+}
+
+function fetchPlaybackInfo(tidalId, audioQuality) {
+    return tidalGet('tracks/' + tidalId + '/playbackinfopostpaywall', {
+        audioquality:   audioQuality,
+        playbackmode:   'STREAM',
+        assetpresentation: 'FULL'
+    }).then(function(data) {
+        if (!data.manifest) throw new Error('No manifest in playbackinfo');
+
+        // Decode base64 manifest
+        var decoded;
+        try {
+            decoded = atob(String(data.manifest));
+        } catch(e) {
+            throw new Error('Manifest base64 decode failed');
         }
-      } else if (targetQuality === "HI_RES_LOSSLESS") {
-        streamUrl = track.audio?. hifi?.url;
-        if (!streamUrl) streamUrl = track.audio?. lossless?.url;
-      } else if (targetQuality === "LOSSLESS") {
-        streamUrl = track.audio?. lossless?.url;
-      } else if (targetQuality === "HIGH") {
-        streamUrl = track.audio?. high?.url;
-      } else if (targetQuality === "LOW") {
-        streamUrl = track.audio?. standard?.url;
-      }
 
-      if (streamUrl) {
-        return {
-          url: streamUrl,
-          quality: targetQuality,
-          trackId
-        };
-      }
-    }
+        // BTS JSON manifest: { "urls": ["https://..."] }
+        if (decoded.trim().charAt(0) === '{') {
+            var parsed = JSON.parse(decoded);
+            var url = parsed.urls && parsed.urls[0] ? String(parsed.urls[0]) : '';
+            if (!url) throw new Error('BTS manifest has no URL');
+            return {
+                streamUrl: url,
+                audioQuality: String(data.audioQuality || audioQuality),
+                bitDepth:   Number(data.bitDepth   || 0),
+                sampleRate: Number(data.sampleRate || 0),
+                codec:      String(data.audioMode === 'DOLBY_ATMOS' ? 'EC3' : 'FLAC')
+            };
+        }
 
-    // Fallback: try next quality level
-    const fallbacks = {
-      DOLBY_ATMOS: "HI_RES_LOSSLESS",
-      HI_RES_LOSSLESS: "LOSSLESS",
-      LOSSLESS: "HIGH",
-      HIGH: "LOW"
-    };
-
-    const fallbackQuality = fallbacks[targetQuality];
-    if (fallbackQuality) {
-      return getTrackStreamUrl(trackId, fallbackQuality);
-    }
-  } catch (error) {
-    console.error("Error getting track stream URL:", error);
-  }
-
-  return null;
-}
-
-export async function getAlbumStreamUrl(albumId, quality = "LOSSLESS") {
-  try {
-    const response = await fetch(`${BASE_URL}/v1/albums/${albumId}`, {
-      method: "GET",
-      headers: {
-        "Accept": "application/json",
-        "Authorization": `Bearer ${PUBLIC_TOKEN}`
-      }
+        // DASH MPD manifest — extract init + segment URLs
+        // For simplicity return the manifest URL approach isn't feasible in a player context;
+        // we signal the MPD so 8SPINE's player can handle it natively
+        throw new Error('MPD manifest returned — requires HLS/DASH player support');
     });
+}
 
-    const data = await response.json();
+function resolveStreamUrl(tidalId, requestedQ) {
+    var chain = fallbackChain(requestedQ);
 
-    if (data.albums && data.albums[0]) {
-      const album = data.albums[0];
-      let streamUrl;
+    function tryNext(index) {
+        if (index >= chain.length) {
+            return Promise.reject(new Error('No Tidal stream found for any quality tier'));
+        }
+        var q = chain[index];
 
-      const qualityMap = {
-        DOLBY_ATMOS: "DOLBY_ATMOS",
-        HI_RES_LOSSLESS: "HI_RES_LOSSLESS",
-        LOSSLESS: "LOSSLESS",
-        HIGH: "HIGH",
-        LOW: "LOW"
-      };
+        // For HIGH/LOW: try legacy endpoint first (simpler, direct MP4/AAC URL)
+        if (q === 'HIGH' || q === 'LOW') {
+            return fetchStreamLegacy(tidalId, q)
+                .then(function(url) {
+                    return { streamUrl: url, audioQuality: q, codec: 'AAC' };
+                })
+                .catch(function() {
+                    // legacy failed, try playbackinfo anyway then move to next tier
+                    return fetchPlaybackInfo(tidalId, q)
+                        .catch(function() { return tryNext(index + 1); });
+                });
+        }
 
-      const targetQuality = qualityMap[quality] || "LOSSLESS";
+        // DOLBY_ATMOS / HI_RES_LOSSLESS / LOSSLESS → playbackinfo
+        return fetchPlaybackInfo(tidalId, q)
+            .catch(function(err) {
+                // If this tier genuinely doesn't exist for the track, go to next
+                console.warn('[Tidal] Quality ' + q + ' unavailable (' + (err && err.message) + '), trying next…');
+                return tryNext(index + 1);
+            });
+    }
 
-      if (targetQuality === "DOLBY_ATMOS") {
-        streamUrl = album?. audio?. DolbyAtmos?.url;
-        if (!streamUrl) streamUrl = album?. audio?. hifi?.url;
-      } else if (targetQuality === "HI_RES_LOSSLESS") {
-        streamUrl = album?. audio?. hifi?.url;
-        if (!streamUrl) streamUrl = album?. audio?. lossless?.url;
-      } else if (targetQuality === "LOSSLESS") {
-        streamUrl = album?. audio?. lossless?.url;
-      } else if (targetQuality === "HIGH") {
-        streamUrl = album?. audio?. high?.url;
-      } else if (targetQuality === "LOW") {
-        streamUrl = album?. audio?. standard?.url;
-      }
+    return tryNext(0);
+}
 
-      if (streamUrl) {
+// ─── searchTracks ─────────────────────────────────────────────────────────────
+
+function searchTracks(query, limit, context) {
+    var lim = Math.min(Number(limit) || 25, 50);
+
+    return tidalGet('search/tracks', { query: query, limit: lim, offset: 0 })
+        .then(function(data) {
+            var items = data.items || [];
+            var tracks = [];
+            for (var i = 0; i < items.length; i++) {
+                var t = formatTrack(items[i]);
+                if (t) tracks.push(t);
+            }
+            return { tracks: tracks, total: data.totalNumberOfItems || tracks.length };
+        })
+        .catch(function(err) {
+            console.error('[Tidal] searchTracks error:', err && err.message);
+            return { tracks: [], total: 0 };
+        });
+}
+
+// ─── getTrackStreamUrl ────────────────────────────────────────────────────────
+
+function getTrackStreamUrl(trackId, preferredQuality, context) {
+    var settings = (context && context.settings) || {};
+    var targetQ  = (settings.quality && settings.quality.value) || preferredQuality || 'LOSSLESS';
+
+    // Parse tidal ID from prefixed format: "tidal_12345678"
+    var raw = String(trackId);
+    var tidalId = raw.indexOf('tidal_') === 0 ? raw.slice(6) : raw;
+
+    return resolveStreamUrl(tidalId, targetQ)
+        .then(function(result) {
+            var note = '';
+            if (targetQ === 'DOLBY_ATMOS' && result.audioQuality !== 'DOLBY_ATMOS') {
+                note = 'Dolby Atmos non disponibile — riproduzione in ' + result.audioQuality;
+                console.warn('[Tidal] ' + note);
+            }
+            return {
+                streamUrl: result.streamUrl,
+                track: {
+                    id:           trackId,
+                    audioQuality: result.audioQuality,
+                    codec:        result.codec        || '',
+                    bitDepth:     result.bitDepth     || null,
+                    sampleRate:   result.sampleRate   || null,
+                    note:         note || undefined
+                }
+            };
+        });
+}
+
+// ─── getAlbum ─────────────────────────────────────────────────────────────────
+
+function getAlbum(albumId) {
+    var raw     = String(albumId);
+    var tidalId = raw.indexOf('tidal_album_') === 0 ? raw.slice(12) : raw;
+
+    return Promise.all([
+        tidalGet('albums/' + tidalId, {}),
+        tidalGet('albums/' + tidalId + '/items', { limit: 100, offset: 0 })
+    ]).then(function(results) {
+        var album = results[0];
+        var items = results[1].items || [];
+        var cover = imageURL(album.cover || '', '1280x1280');
+
         return {
-          url: streamUrl,
-          quality: targetQuality,
-          albumId
+            album: {
+                id:         'tidal_album_' + tidalId,
+                title:      String(album.title   || ''),
+                artist:     joinNames(album.artists) || String((album.artist && album.artist.name) || ''),
+                albumCover: cover,
+                year:       parseInt(String(album.releaseDate || '0').slice(0, 4), 10),
+                trackCount: Number(album.numberOfTracks || items.length)
+            },
+            tracks: items.map(function(item) {
+                var t = formatTrack(item.item || item);
+                return t;
+            }).filter(Boolean)
         };
-      }
-    }
-
-    const fallbacks = {
-      DOLBY_ATMOS: "HI_RES_LOSSLESS",
-      HI_RES_LOSSLESS: "LOSSLESS",
-      LOSSLESS: "HIGH",
-      HIGH: "LOW"
-    };
-
-    const fallbackQuality = fallbacks[targetQuality];
-    if (fallbackQuality) {
-      return getAlbumStreamUrl(albumId, fallbackQuality);
-    }
-  } catch (error) {
-    console.error("Error getting album stream URL:", error);
-  }
-
-  return null;
-}
-
-export async function getPlaylists(limit = 50) {
-  const response = await fetch(`${BASE_URL}/v1/me/playlists`, {
-    method: "GET",
-    headers: {
-      "Accept": "application/json",
-      "Authorization": `Bearer ${PUBLIC_TOKEN}`
-    },
-    params: {
-      limit,
-      "fields": "id,name,tracks"
-    }
-  });
-
-  const data = await response.json();
-  return data.items || [];
-}
-
-export async function getPlaylistTracks playlistId, limit = 100) {
-  const response = await fetch(`${BASE_URL}/v1/playlists/${playlistId}/tracks`, {
-    method: "GET",
-    headers: {
-      "Accept": "application/json",
-      "Authorization": `Bearer ${PUBLIC_TOKEN}`
-    },
-    params: {
-      limit,
-      "fields": "track.id,track.name,track.artists,track.album"
-    }
-  });
-
-  const data = await response.json();
-  return data.items || [];
-}
-
-export async function getUserProfile() {
-  try {
-    const response = await fetch(`${BASE_URL}/v1/me`, {
-      method: "GET",
-      headers: {
-        "Accept": "application/json",
-        "Authorization": `Bearer ${PUBLIC_TOKEN}`
-      }
     });
-
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error("Error getting user profile:", error);
-    return null;
-  }
 }
 
-export async function loginWithToken(token) {
-  // Store token for subsequent requests
-  await AsyncStorage.setItem("tidal_access_token", token);
-  PUBLIC_TOKEN = token;
-  
-  return true;
+// ─── getArtist ────────────────────────────────────────────────────────────────
+
+function getArtist(artistId) {
+    var raw     = String(artistId);
+    var tidalId = raw.indexOf('tidal_artist_') === 0 ? raw.slice(13) : raw;
+
+    return Promise.all([
+        tidalGet('artists/' + tidalId, {}),
+        tidalGet('artists/' + tidalId + '/albums', { limit: 20, offset: 0 }),
+        tidalGet('artists/' + tidalId + '/toptracks', { limit: 10, offset: 0 })
+    ]).then(function(results) {
+        var artist    = results[0];
+        var albums    = results[1].items || [];
+        var topTracks = results[2].items || [];
+        var image     = imageURL(artist.picture || '', '750x750');
+
+        return {
+            artist: {
+                id:         'tidal_artist_' + tidalId,
+                name:       String(artist.name || ''),
+                artworkURL: image
+            },
+            topTracks: topTracks.map(formatTrack).filter(Boolean),
+            albums: albums.map(function(a) {
+                return {
+                    id:         'tidal_album_' + String(a.id || ''),
+                    title:      String(a.title || ''),
+                    artist:     joinNames(a.artists) || '',
+                    albumCover: imageURL(a.cover || '', '1280x1280'),
+                    year:       parseInt(String(a.releaseDate || '0').slice(0, 4), 10)
+                };
+            })
+        };
+    });
 }
 
-export async function logout() {
-  await AsyncStorage.removeItem("tidal_access_token");
-  PUBLIC_TOKEN = "49YxDN9a2aFV6RTG";
-  
-  return true;
-}
+// ─── Module export ────────────────────────────────────────────────────────────
 
-export async function isLoggedIn() {
-  const token = await AsyncStorage.getItem("tidal_access_token");
-  return token !== null;
-}
+return {
+    id:          'tidal-spotiflac',
+    name:        'Tidal',
+    author:      'SpotiFLAC',
+    version:     '1.0.0',
+    description: 'Tidal via public API. Supporta Dolby Atmos, Hi-Res FLAC, Lossless e AAC con fallback automatico.',
+    labels:      ['FLAC', 'LOSSLESS', 'ATMOS', 'HI-RES'],
+
+    settings: {
+        quality: {
+            type:         'selector',
+            label:        'Qualità Audio',
+            description:  'Seleziona la qualità preferita. Se non disponibile per la traccia, scende automaticamente.',
+            options: [
+                { label: 'Dolby Atmos',              value: 'DOLBY_ATMOS' },
+                { label: 'Hi-Res FLAC (24-bit)',      value: 'HIRES'       },
+                { label: 'Lossless FLAC (16-bit)',    value: 'LOSSLESS'    },
+                { label: 'High (AAC 320kbps)',        value: 'HIGH'        },
+                { label: 'Low (AAC 96kbps)',          value: 'LOW'         }
+            ],
+            defaultValue: 'LOSSLESS'
+        }
+    },
+
+    searchTracks:      searchTracks,
+    getTrackStreamUrl: getTrackStreamUrl,
+    getAlbum:          getAlbum,
+    getArtist:         getArtist
+};
